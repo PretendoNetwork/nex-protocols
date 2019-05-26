@@ -1,59 +1,22 @@
-
 package NEXProtocol0x0A
 
-import(
-	"encoding/binary"
+import (
 	"encoding/hex"
 	"fmt"
+	"strconv"
+
+	Common "../common"
 )
 
-type NEXString struct {
-	Length uint16
-	String string
-}
-
-func (s NEXString) FromBytes(params []byte) NEXString {
-	s.Length = binary.LittleEndian.Uint16(params[0:])
-	s.String = string(params[1:len(params)-1])
-	return s
-}
-
-func (s NEXString) FromString(params string) NEXString {
-	s.String = params
-	s.Length = uint16(len(params) + 1)
-	return s
-}
-
-func (s NEXString) Bytes() []byte {
-	s.Length = uint16(len(s.String) + 1)
-	ret := []byte{}
-	binary.LittleEndian.PutUint16(ret, s.Length)
-	stringpart := hex.EncodeToString([]byte(s.String)) + "00"
-	lengthpart := hex.EncodeToString(ret)
-	bytes, _ := hex.DecodeString(lengthpart + stringpart)
-	return bytes
-}
-
-type NEXBuffer struct {
-	Length uint32
-	Data []byte
-}
-
-func (b NEXBuffer) FromBytes(params []byte) NEXBuffer {
-	b.Length = binary.LittleEndian.Uint32(params[0:])
-	b.Data = params[4:len(params)-5]
-	return b
-}
-
 type InitOptions struct {
-	SecureServerIP string
+	SecureServerIP   string
 	SecureServerPort string
-	MongoIP string
-	MongoPort string
-	MongoPassword string
+	MongoIP          string
+	MongoPort        string
+	MongoPassword    string
 }
 
-var initialized = false
+var initialized = true
 var protocoloptions = InitOptions{}
 
 func InitProtocol(options InitOptions) bool {
@@ -64,13 +27,60 @@ func InitProtocol(options InitOptions) bool {
 
 // just return errors for now for testing purposes
 func Login(params []byte) ([]byte, uint32) {
-	if !initialized {
+	/*if !initialized {
 		return nil, uint32(0xFFFFFFFF)
-	}
-	parameters := NEXString{}.FromBytes(params)
-	fmt.Println("User " + parameters.String + " is trying to authenticate...")
-	resultcode := uint32(0x8068000B)
-	byteresult := []byte{0x0,0x0,0x0,0x0}
-	binary.LittleEndian.PutUint32(byteresult, resultcode)
-	return byteresult, resultcode
+	}*/
+	username := Common.NEXString{}.FromBytes(params)
+	fmt.Println("User \"" + username.String + "\" is trying to authenticate...")
+	usrpid, _ := strconv.ParseUint(username.String, 10, 32)
+	//fmt.Println(usrpid)
+
+	//build response data
+	outstream := Common.NewOutputStream()
+
+	//add result code
+	resultcode := uint32(0x00010001)
+	outstream.UInt32LE(resultcode)
+
+	//add user pid
+	outstream.UInt32LE(uint32(usrpid))
+
+	//add Kerberos ticket
+	buffer, _ := hex.DecodeString("100000002e71a7d60d41233d942e5d1306e262a72c000000bc3de22f0eac8337fcea49ccca4bce0dbfcd23f8c168fc6661a823750277161a858644ed3ce191e510bdd960")
+	tik := Common.NewTicket(make([]byte, 16), 0x00000001, buffer)
+	fmt.Println(hex.EncodeToString(tik.Encrypt(uint32(usrpid), "WDQuTAQaOJ4lCt8t")))
+	outstream.Buffer(tik.Encrypt(uint32(usrpid), "WDQuTAQaOJ4lCt8t"))
+
+	//add RVConnectionData
+	outstream.String("prudp:/stream=10;type=2;PID=2;port=60001;address=192.168.137.1;sid=1;CID=1")
+	outstream.UInt32LE(0x00000000)
+	outstream.String("")
+
+	//add Server name
+	outstream.String("branch:origin/feature/45925_FixAutoReconnect build:3_10_11_2006_0")
+
+	return outstream.Bytes(), resultcode
+}
+
+func RequestTicket(params []byte) ([]byte, uint32) {
+	instream := Common.NewInputStream(params)
+	usrpid := instream.UInt32LE()
+	//secservpid := instream.UInt32LE()
+
+	fmt.Println("User \"" + string(usrpid) + "\" is requesting the secure server ticket...")
+
+	//build response data
+	outstream := Common.NewOutputStream()
+
+	//add result code
+	resultcode := uint32(0x00010001)
+	outstream.UInt32LE(resultcode)
+
+	//add Kerberos ticket
+	buffer, _ := hex.DecodeString("100000002e71a7d60d41233d942e5d1306e262a72c000000bc3de22f0eac8337fcea49ccca4bce0dbfcd23f8c168fc6661a823750277161a858644ed3ce191e510bdd960")
+	tik := Common.NewTicket(make([]byte, 16), 0x00000001, buffer)
+	fmt.Println(hex.EncodeToString(tik.Encrypt(uint32(usrpid), "WDQuTAQaOJ4lCt8t")))
+	outstream.Buffer(tik.Encrypt(uint32(usrpid), "WDQuTAQaOJ4lCt8t"))
+
+	return outstream.Bytes(), resultcode
 }
